@@ -1,1 +1,6 @@
-README.md
+node_modules/
+dist/
+.DS_Store
+*.tsbuildinfo
+patent_pdfs/
+_archive/

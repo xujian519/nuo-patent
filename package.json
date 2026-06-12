@@ -1,0 +1,54 @@
+{
+  "name": "nuo-patent",
+  "version": "2.1.0",
+  "description": "小诺智能体专利工具包 · TypeScript 版 · 统一专利检索、分析与下载",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "bench": "node --import tsx bench/index.ts"
+  },
+  "keywords": [
+    "patent",
+    "google-patents",
+    "cnipa",
+    "scraper",
+    "pdf-download",
+    "legal-status"
+  ],
+  "author": "小诺团队 · Xiaonuo Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xujian/nuo-patent.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "domhandler": "^6.0.1",
+    "undici": "^8.4.1"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.40.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.5.0"
+  }
+}
