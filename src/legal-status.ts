@@ -3,11 +3,14 @@
  */
 
 import * as cheerio from 'cheerio';
-import {
+import type {
   LegalStatusResult,
   AnnuityStatus,
-  TimelineEvent
+  TimelineEvent,
+  Logger,
+  LegalStatusOptions,
 } from './types.js';
+import { noopLogger } from './types.js';
 import { GooglePatentsScraper } from './scraper.js';
 
 export class LegalStatusChecker {
@@ -17,10 +20,22 @@ export class LegalStatusChecker {
     this.scraper = scraper ?? new GooglePatentsScraper(false, true);
   }
 
-  async check(patentNumber: string): Promise<LegalStatusResult> {
+  /**
+   * 查询单个专利的法律状态。
+   *
+   * @param patentNumber - 专利号
+   * @param signal - 可选的 AbortSignal
+   * @param logger - 可选日志接口
+   */
+  async check(
+    patentNumber: string,
+    signal?: AbortSignal,
+    logger: Logger = noopLogger,
+  ): Promise<LegalStatusResult> {
     const [error, soup, url] = await this.scraper.requestSinglePatent(patentNumber);
 
     if (error !== 'Success' || !soup) {
+      logger.warn(`查询 ${patentNumber} 法律状态失败: ${error}`);
       return {
         patent_number: patentNumber,
         title: '',
@@ -33,7 +48,25 @@ export class LegalStatusChecker {
         inventor: '',
         events_summary: [],
         url: url,
-        error: String(error)
+        error: String(error),
+      };
+    }
+
+    // 响应取消信号
+    if (signal?.aborted) {
+      return {
+        patent_number: patentNumber,
+        title: '',
+        status: 'UNKNOWN',
+        ifi_status: '',
+        estimated_expiration: '',
+        filing_date: '',
+        grant_date: '',
+        applicant: '',
+        inventor: '',
+        events_summary: [],
+        url: url,
+        error: '请求已被取消',
       };
     }
 
@@ -51,20 +84,86 @@ export class LegalStatusChecker {
       applicant: data.assignee_name_current || '',
       inventor: data.inventor_name || '',
       events_summary: eventsSummary,
-      url: url
+      url: url,
     };
   }
 
-  async checkBatch(patentNumbers: string[]): Promise<Record<string, LegalStatusResult>> {
+  /**
+   * 批量查询法律状态（并发执行）。
+   *
+   * @param patentNumbers - 专利号列表
+   * @param options - 查询选项（signal, logger, maxConcurrency）
+   */
+  async checkBatch(
+    patentNumbers: string[],
+    options: LegalStatusOptions = {},
+  ): Promise<Record<string, LegalStatusResult>> {
+    const { signal, logger = noopLogger, maxConcurrency = 4 } = options;
     const results: Record<string, LegalStatusResult> = {};
 
-    for (const pn of patentNumbers) {
-      results[pn] = await this.check(pn);
+    logger.info(`开始批量查询 ${patentNumbers.length} 篇专利法律状态 (并发数: ${maxConcurrency})`);
+
+    // 并发分批处理
+    for (let i = 0; i < patentNumbers.length; i += maxConcurrency) {
+      if (signal?.aborted) {
+        for (const pn of patentNumbers.slice(i)) {
+          results[pn] = {
+            patent_number: pn,
+            title: '',
+            status: 'UNKNOWN',
+            ifi_status: '',
+            estimated_expiration: '',
+            filing_date: '',
+            grant_date: '',
+            applicant: '',
+            inventor: '',
+            events_summary: [],
+            url: '',
+            error: '请求已被取消',
+          };
+        }
+        break;
+      }
+
+      const batch = patentNumbers.slice(i, i + maxConcurrency);
+      const batchPromises = batch.map(pn =>
+        this.check(pn, signal, logger),
+      );
+
+      const batchResults = await Promise.allSettled(batchPromises);
+      for (let j = 0; j < batch.length; j++) {
+        const settled = batchResults[j];
+        if (settled.status === 'fulfilled') {
+          results[batch[j]] = settled.value;
+        } else {
+          const error = settled.reason instanceof Error
+            ? settled.reason.message
+            : String(settled.reason);
+          logger.warn(`${batch[j]} 查询失败: ${error}`);
+          results[batch[j]] = {
+            patent_number: batch[j],
+            title: '',
+            status: 'UNKNOWN',
+            ifi_status: '',
+            estimated_expiration: '',
+            filing_date: '',
+            grant_date: '',
+            applicant: '',
+            inventor: '',
+            events_summary: [],
+            url: '',
+            error,
+          };
+        }
+      }
     }
 
     return results;
   }
 
+  /**
+   * 格式化法律状态报告（面向人类可读输出）。
+   */
   formatStatusReport(result: LegalStatusResult): string {
     const lines: string[] = [];
     lines.push(`📋 专利: ${result.patent_number}`);
@@ -74,7 +173,7 @@ export class LegalStatusChecker {
     lines.push(`  申请日: ${result.filing_date || 'N/A'}`);
     lines.push(`  授权日: ${result.grant_date || 'N/A'}`);
 
-    // 检查是否已过期
+    // 过期检查
     const expiration = result.estimated_expiration;
     if (expiration) {
       try {
@@ -83,10 +182,12 @@ export class LegalStatusChecker {
         if (expDate < now) {
           lines.push(`  ⚠️  已过期 (${expiration})`);
         } else {
-          const remainingDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          const remainingDays = Math.ceil(
+            (expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+          );
           lines.push(`  ✅ 有效, 剩余 ${remainingDays} 天`);
         }
-      } catch (e) {
+      } catch {
         // 日期解析错误时跳过
       }
     }
@@ -94,8 +195,19 @@ export class LegalStatusChecker {
     return lines.join('\n');
   }
 
-  async checkAnnuityStatus(patentNumber: string): Promise<AnnuityStatus> {
-    const result = await this.check(patentNumber);
+  /**
+   * 查询年费状态。
+   *
+   * @param patentNumber - 专利号
+   * @param signal - 可选的 AbortSignal
+   * @param logger - 可选日志接口
+   */
+  async checkAnnuityStatus(
+    patentNumber: string,
+    signal?: AbortSignal,
+    logger: Logger = noopLogger,
+  ): Promise<AnnuityStatus> {
+    const result = await this.check(patentNumber, signal, logger);
     const feeEvents: TimelineEvent[] = [];
 
     for (const event of result.events_summary) {
@@ -109,10 +221,10 @@ export class LegalStatusChecker {
 
     return {
       patent_number: patentNumber,
-      status: result.status,
-      estimated_expiration: result.estimated_expiration,
+      status: result.status || '',
+      estimated_expiration: result.estimated_expiration || '',
       fee_events: feeEvents,
-      note: '年费详情建议查询 USPTO Patent Maintenance Fee Store 或对应国家专利局'
+      note: '年费详情建议查询 USPTO Patent Maintenance Fee Store 或对应国家专利局',
     };
   }
 
@@ -130,11 +242,11 @@ export class LegalStatusChecker {
           eventsSummary.push({
             type: evType.text().trim(),
             date: evTime.text().trim(),
-            title: evTitle.length > 0 ? evTitle.text().trim() : ''
+            title: evTitle.length > 0 ? evTitle.text().trim() : '',
           });
         }
       } catch {
-        // skip malformed elements
+        // 跳过格式不正确的元素
       }
     });
 

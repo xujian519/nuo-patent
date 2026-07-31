@@ -4,6 +4,9 @@
   "description": "小诺智能体专利工具包 · TypeScript 版 · 统一专利检索、分析与下载",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "nuo-patent": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",

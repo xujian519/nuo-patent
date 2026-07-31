@@ -11,6 +11,9 @@
  * - patentTransactions(pub)   — 通过公布号查法律状态
  * - downloadPdf(pubNumber, outputDir)  — PDF 下载
  * - legalStatusSummary(pub)   — 法律状态摘要
+ *
+ * 注意：此模块通过 child_process 调用 Python 脚本，需要 python3 和
+ * cnipa_epub_client.py（来自 YunXi 项目）。
  */
 
 import { execFile } from 'child_process';
@@ -23,7 +26,9 @@ import type {
   PatentDetail,
   TransactionRecord,
   SearchResult,
+  Logger,
 } from './types.js';
+import { noopLogger } from './types.js';
 import { CNIPAQueryError } from './errors.js';
 
 const execFileAsync = promisify(execFile);
@@ -38,8 +43,9 @@ function _getModuleDir(): string {
 
 const _TOOL_CANDIDATE_PATHS = [
   join(_getModuleDir(), '../cnipa_tool/cnipa_epub_client.py'),
-  // 环境变量
-  typeof process !== 'undefined' && process.env.CNIPA_TOOL_PATH ? process.env.CNIPA_TOOL_PATH : '',
+  typeof process !== 'undefined' && process.env.CNIPA_TOOL_PATH
+    ? process.env.CNIPA_TOOL_PATH
+    : '',
 ];
 
 function _findTool(): string | null {
@@ -52,13 +58,8 @@ function _findTool(): string | null {
   return null;
 }
 
-function _toolWorkdir(): string | null {
-  /** 返回 CNIPA 工具的工作目录（父目录）。 */
-  const tool = _findTool();
-  if (tool) {
-    return dirname(tool);
-  }
-  return null;
+function _toolWorkdir(toolPath: string): string | null {
+  return dirname(toolPath);
 }
 
 // ---------------------------------------------------------------------------
@@ -70,44 +71,44 @@ export class CNIPAClient {
 
   private toolPath: string;
   private workDir: string;
+  private logger: Logger;
 
   /**
    * 创建 CNIPA 客户端实例。
    *
+   * 构造函数不会因找不到工具脚本而抛异常——可用 `isAvailable()` 预先检查。
+   * 实际查询时如果工具脚本不存在，会抛出 `CNIPAQueryError`。
+   *
    * @param toolPath - 可选的 cnipa_epub_client.py 脚本路径
    * @param workDir - 可选的工作目录
-   *
-   * @throws {CNIPAQueryError} 当找不到工具脚本时抛出
+   * @param logger - 可选的日志接口
    *
    * @example
    * ```typescript
    * const client = new CNIPAClient();
+   * if (!client.isAvailable()) {
+   *   console.error('CNIPA 查询不可用，请安装 YunXi 项目');
+   *   return;
+   * }
    *
    * // 搜索
    * const result = await client.search('人工智能');
    *
-   * // 查详情
-   * const detail = await client.detail('CN122072823A');
-   *
-   * // 查法律状态（申请号）
-   * const records = await client.transaction('2023113560975');
-   *
-   * // 查法律状态（公布号）
-   * const records = await client.patentTransactions('CN122072823A');
-   *
-   * // 下载 PDF
-   * const pdfPath = await client.downloadPdf('CN122072823A', '/tmp/');
+   * // 查法律状态
+   * const summary = await client.legalStatusSummary('CN122072823A');
    * ```
    */
-  constructor(toolPath?: string, workDir?: string) {
-    this.toolPath = toolPath ?? _findTool() ?? '';
-    if (!this.toolPath) {
-      throw new CNIPAQueryError(
-        '找不到 CNIPA 查询工具。请通过环境变量 CNIPA_TOOL_PATH 指定，\n' +
-        '或安装 YunXi 项目 (https://github.com/xujian/YunXi)'
-      );
+  constructor(toolPath?: string, workDir?: string, logger?: Logger) {
+    this.logger = logger ?? noopLogger;
+
+    const resolvedPath = toolPath ?? _findTool() ?? '';
+    this.toolPath = resolvedPath;
+
+    if (resolvedPath) {
+      this.workDir = workDir ?? _toolWorkdir(resolvedPath) ?? dirname(resolvedPath);
+    } else {
+      this.workDir = workDir ?? process.cwd();
     }
-    this.workDir = workDir ?? _toolWorkdir() ?? dirname(this.toolPath);
   }
 
   // ------------------------------------------------------------------
@@ -116,7 +117,15 @@ export class CNIPAClient {
 
   private async _run(...args: string[]): Promise<string> {
     /** 运行 CNIPA 客户端命令，返回 stdout。 */
+    if (!this.toolPath) {
+      throw new CNIPAQueryError(
+        '找不到 CNIPA 查询工具。请通过环境变量 CNIPA_TOOL_PATH 指定，\n' +
+        '或安装 YunXi 项目 (https://github.com/xujian/YunXi)',
+      );
+    }
+
     const cmd = ['python3', this.toolPath, ...args];
+    this.logger.debug(`执行命令: ${cmd.join(' ')}`);
 
     try {
       const { stdout, stderr } = await execFileAsync(cmd[0], cmd.slice(1), {
@@ -135,22 +144,31 @@ export class CNIPAClient {
 
       return stdout.trim();
     } catch (error) {
+      if (error instanceof CNIPAQueryError) {
+        throw error;
+      }
+
       if (error instanceof Error) {
-        // 检查是否是超时错误
+        // 超时
         if ('killed' in error && 'signal' in error) {
+          this.logger.warn('CNIPA 查询超时 (180s)');
           throw new CNIPAQueryError(
-            'CNIPA 查询超时 (180s)，网络或 WAF 验证可能过慢'
+            'CNIPA 查询超时 (180s)，网络或 WAF 验证可能过慢',
           );
         }
 
-        // 检查是否是文件不存在错误
-        if ('code' in error && error.code === 'ENOENT') {
-          throw new CNIPAQueryError(`找不到脚本: ${this.toolPath}`);
+        // 文件不存在
+        if ('code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+          throw new CNIPAQueryError(
+            `找不到脚本或 Python3: ${this.toolPath}。请确认 python3 已安装且脚本路径正确。`,
+          );
         }
 
-        // 其他错误
-        if ('stderr' in error && typeof error.stderr === 'string') {
-          throw new CNIPAQueryError(`CNIPA 查询失败: ${error.stderr.trim()}`);
+        // 带 stderr 的错误
+        if ('stderr' in error && typeof (error as any).stderr === 'string') {
+          const stderrText = (error as any).stderr.trim();
+          this.logger.warn(`CNIPA stderr: ${stderrText}`);
+          throw new CNIPAQueryError(`CNIPA 查询失败: ${stderrText}`);
         }
 
         throw new CNIPAQueryError(`CNIPA 查询失败: ${error.message}`);
@@ -160,18 +178,29 @@ export class CNIPAClient {
     }
   }
 
+  /**
+   * 解析 CLI 输出的 JSON 数据。
+   * 按行扫描，取第一个成功解析的 JSON 对象/数组。
+   */
   private _parseJsonOutput<T = unknown>(output: string): T | null {
-    /** 解析 CLI 输出的 JSON 数据。 */
     for (const line of output.split('\n')) {
       const trimmed = line.trim();
-      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      if (!trimmed) continue;
+
+      // 只尝试以 { 或 [ 开头且足够长的行（跳过短 JSON 片段）
+      if (
+        (trimmed.startsWith('{') || trimmed.startsWith('[')) &&
+        trimmed.length >= 4
+      ) {
         try {
           return JSON.parse(trimmed) as T;
         } catch {
+          // 不是有效 JSON，继续下一行
           continue;
         }
       }
     }
+    this.logger.warn('_parseJsonOutput: 未找到有效 JSON 行');
     return null;
   }
 
@@ -215,7 +244,6 @@ export class CNIPAClient {
     const data = this._parseJsonOutput<Partial<PatentDetail>>(output);
 
     if (data && typeof data === 'object') {
-      // 只包含 PatentDetail 接口中定义的字段
       const validFields: Record<string, unknown> = {};
       const detailFields: (keyof PatentDetail)[] = [
         'title',
@@ -332,24 +360,24 @@ export class CNIPAClient {
       if (existsSync(outputPath)) {
         return outputPath;
       }
+      this.logger.warn(`PDF 命令执行成功但文件不存在: ${outputPath}`);
     } catch (error) {
-      if (error instanceof Error) {
-        console.error(`[CNIPA] PDF 下载失败: ${error.message}`);
-      }
+      this.logger.warn(`PDF 下载失败: ${error instanceof Error ? error.message : String(error)}`);
     }
     return null;
   }
 
   /**
-   * 检查 CNIPA 工具是否可用的快速检测。
+   * 检查 CNIPA 工具是否可用。
+   *
+   * 仅检查脚本文件和 python3 是否可执行，不实际发起网络请求（避免触发 WAF）。
    *
    * @returns 是否可用
    */
   isAvailable(): boolean {
-    if (!existsSync(this.toolPath)) {
+    if (!this.toolPath || !existsSync(this.toolPath)) {
       return false;
     }
-    // 不真的发起查询（可能触发 WAF），只检查文件存在
     return true;
   }
 
