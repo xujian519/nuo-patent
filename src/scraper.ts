@@ -123,11 +123,13 @@ export const systemProxy = getSystemProxy;
 // HTTP 请求层（支持代理隧道、超时、AbortSignal）
 // ---------------------------------------------------------------------------
 
-interface FetchOptions {
+export interface FetchOptions {
   headers?: Record<string, string>;
   signal?: AbortSignal;
   timeout?: number;
   logger?: Logger;
+  /** 自定义 fetch 实现（测试注入；缺省用全局 fetch） */
+  fetchImpl?: typeof fetch;
 }
 
 /**
@@ -137,7 +139,7 @@ export async function fetchHtml(
   targetUrl: string,
   options: FetchOptions = {},
 ): Promise<string> {
-  const { headers = {}, signal, timeout = 30000, logger = noopLogger } = options;
+  const { headers = {}, signal, timeout = 30000, logger = noopLogger, fetchImpl } = options;
 
   // macOS 上优先使用 ego-browser（真实 Chromium）抓取，失败自动回退原生网络栈
   if (isEgoBrowserAvailable()) {
@@ -166,7 +168,7 @@ export async function fetchHtml(
     }
 
     try {
-      const resp = await fetch(targetUrl, {
+      const resp = await (fetchImpl ?? fetch)(targetUrl, {
         headers,
         signal: controller.signal,
       });
@@ -708,6 +710,7 @@ export async function scrapePatent(
     headers = {},
     returnAbstract = true,
     returnLegal = true,
+    fetchImpl,
   } = options;
 
   // 1. 校验专利号
@@ -736,6 +739,7 @@ export async function scrapePatent(
       signal,
       timeout,
       logger,
+      fetchImpl,
     });
   } catch (e: unknown) {
     const err = e instanceof Error ? e : new Error(String(e));

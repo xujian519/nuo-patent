@@ -117,6 +117,8 @@ export interface ScrapeOptions {
   returnAbstract?: boolean;
   /** 是否提取法律状态，默认 true */
   returnLegal?: boolean;
+  /** 自定义 fetch 实现（测试注入；缺省用全局 fetch） */
+  fetchImpl?: typeof fetch;
 }
 
 /** 无状态 scrapePatent() 的统一返回值 — 始终返回此结构，不抛异常 */

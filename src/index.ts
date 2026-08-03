@@ -51,6 +51,20 @@ export {
 } from './scraper.js';
 
 // ---------------------------------------------------------------------------
+// 检索 API（关键词/布尔检索式，XHR JSON 主路径 + HTML 回退）
+// ---------------------------------------------------------------------------
+export {
+  searchPatents,
+  parseSearchResultsJson,
+  parseSearchResultsHtml,
+} from './search.js';
+export type {
+  PatentSearchHit,
+  PatentSearchResult,
+  PatentSearchOptions,
+} from './search.js';
+
+// ---------------------------------------------------------------------------
 // PDF 下载
 // ---------------------------------------------------------------------------
 export { PDFDownloader, downloadPdf } from './pdf-downloader.js';
@@ -112,6 +126,6 @@ export type {
 // ---------------------------------------------------------------------------
 export { noopLogger } from './types.js';
 
-export const VERSION = '2.2.0';
+export const VERSION = '2.3.0';
 export const AUTHOR = '小诺团队 · Xiaonuo Team';
 export const LICENSE = 'MIT';

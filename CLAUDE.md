@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `nuo-patent` 是小诺（Xiaonuo）智能体生态的专利数据采集层，TypeScript 实现。从 Python 版重构而来（归档于 `_archive/python/`），性能提升约 2x。
 
-核心能力：Google Patents 元数据抓取、PDF 批量下载、法律状态查询、CNIPA 中国专利查询。
+核心能力：Google Patents 元数据抓取、关键词/布尔检索、PDF 批量下载、法律状态查询、CNIPA 中国专利查询。
 
 ## 常用命令
 
@@ -30,6 +30,7 @@ src/
 ├── types.ts            # 所有共享类型定义（PatentData, Citation, LegalStatusResult 等）
 ├── errors.ts           # 自定义错误类层次（NuoPatentError → PatentClassError/PDFDownloadError/CNIPAQueryError...）
 ├── scraper.ts          # 核心：GooglePatentsScraper 类 + 纯解析函数
+├── search.ts           # 检索：searchPatents()（XHR JSON 主路径 + HTML 搜索页回退）+ 纯解析函数
 ├── ego-browser.ts      # ego-browser (ego-lite) 抓取后端：macOS 优先，自动回退
 ├── pdf-downloader.ts   # PDFDownloader：流式下载 + 进度显示 + 并发控制
 ├── legal-status.ts     # LegalStatusChecker：法律状态/年费查询
