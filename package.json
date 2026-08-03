@@ -1,6 +1,6 @@
 {
   "name": "nuo-patent",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "小诺智能体专利工具包 · TypeScript 版 · 统一专利检索、分析与下载",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,8 +9,8 @@
   },
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
     }
   },
   "files": [

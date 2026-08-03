@@ -126,6 +126,6 @@ export type {
 // ---------------------------------------------------------------------------
 export { noopLogger } from './types.js';
 
-export const VERSION = '2.3.0';
+export const VERSION = '2.3.1';
 export const AUTHOR = '小诺团队 · Xiaonuo Team';
 export const LICENSE = 'MIT';
